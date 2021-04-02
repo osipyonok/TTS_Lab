@@ -1,119 +1,120 @@
 #include "TextToSpeechEngine.h"
 
+#include <QByteArray>
+#include <QDataStream>
+#include <QTemporaryDir>
+#include <QUuid>
 
-TextToSpeechEngine::TextToSpeechEngine()
+namespace
 {
-	init();
+    const auto CUSTOM_SILENCE_NAME = QStringLiteral("_.mp3");
+
+    auto _GetRandomString()
+    {
+        return QUuid::createUuid().toString(QUuid::StringFormat::WithoutBraces);
+    }
+}
+
+TextToSpeechEngine::TextToSpeechEngine(const QString& i_patterns)
+    : m_patterns_location(i_patterns)
+    , mp_working_dir(std::make_unique<QTemporaryDir>())
+{
+    init();
 }
 
 
 TextToSpeechEngine::~TextToSpeechEngine()
 {
-/*	QString tempDirPath = QString::fromUtf8(R"(C:\VS\TTS_Lab\TTS_Lab\patterns\temp\)");
-	QDir tempDir(tempDirPath);
-	tempDir.setNameFilters(QStringList() << "*.*");
-	tempDir.setFilter(QDir::Files);
-	foreach(QString tempFile, tempDir.entryList())
-	{
-		tempDir.remove(tempFile);
-	}*/
 }
 
 
 void TextToSpeechEngine::splitWord(const QString & word, StringHash & sHash, int pos, vector<QString> & files) {
-	if (word.isNull() || word.isEmpty()) return;
-	if (pos >= word.length()) return;
+    if (word.isNull() || word.isEmpty()) return;
+    if (pos >= word.length()) return;
 
-	for (int i = word.length() - 1; i >= pos; --i) {
-		long long cur = sHash.str(pos, i);
-		if (patterns.find(cur) != patterns.end()) {
-			files.push_back(patterns[cur].second);
-			splitWord(word, sHash, i + 1, files);
-			return;
-		}
-	}
-	qDebug() << "There is a problem with word" << word << " at index " << pos << endl;
-	splitWord(word, sHash, pos + 1, files);
+    for (int i = word.length() - 1; i >= pos; --i) {
+        long long cur = sHash.str(pos, i);
+        if (patterns.find(cur) != patterns.end()) {
+            files.push_back(patterns[cur].second);
+            splitWord(word, sHash, i + 1, files);
+            return;
+        }
+    }
+    qDebug() << "There is a problem with word" << word << " at index " << pos << endl;
+    splitWord(word, sHash, pos + 1, files);
+}
+
+QString TextToSpeechEngine::getSilencePath()
+{
+    QDir dir(m_patterns_location);
+    QFileInfo file(dir.absoluteFilePath(CUSTOM_SILENCE_NAME));
+    if (file.exists())
+        return file.absolutePath();
+
+    return QStringLiteral(R"(:/DefaultSegments/silence.mp3)");
 }
 
 
 QString TextToSpeechEngine::speechText(QString text) {
-	prepare(text);
-	auto words = text.split(" ");
-	vector<QString> files;
+    prepare(text);
+    auto words = text.split(" ");
+    std::vector<QString> files;
+    
+    const auto path_to_silence = getSilencePath();
+    for (QString word : words) {
+        files.push_back(path_to_silence);
+        StringHash sHash(word);
+        int len = word.length();
+        splitWord(word, sHash, 0, files);
+    }
 
-	for (QString word : words) {
-		StringHash sHash(word);
-		int len = word.length();
-		splitWord(word, sHash, 0, files);
-		files.push_back(u8"C:\\VS\\TTS_Lab\\TTS_Lab\\patterns\\_.mp3");
-	}
-	files.pop_back();
+    QString pathToResult = mp_working_dir->filePath(_GetRandomString() + QString(".mp3"));
+    QFile resultFile(pathToResult);
+    resultFile.open(QIODevice::ReadWrite);
+    QByteArray mergedFiles;
+    QDataStream mergedStream(&mergedFiles, QIODevice::ReadWrite);
+    for (const auto& file_path : files)
+    {
+        QFile file(file_path);
+        auto ok = file.open(QIODevice::ReadOnly);
+        Q_ASSERT(ok);
+        if (!ok)
+            continue;
+        mergedStream << file.readAll();
+    }
 
-	QString command = "";
-	bool isFirst = true;
-	for (QString file : files) {
-		if (isFirst) {
-			isFirst = false;
-		} else {
-			command += "+";
-		}
+    resultFile.write(mergedFiles);
+    resultFile.flush();
+    resultFile.close();
 
-		command += "\"";
-		command += file;
-		command += "\"";
-	}
-
-	QString newFileName = QString("temp\\") + randomString(16) + QString(".mp3");
-	QString pathToResult = QString::fromUtf8("\"C:\\VS\\TTS_Lab\\TTS_Lab\\patterns\\") + newFileName + "\"";
-	command += QString(" ") + pathToResult;
-	for (auto & ch : command) if (ch == '/') ch = '\\';
-	command = QString("copy /b ") + command;
-
-	QString pathToBat = QString::fromUtf8(u8"C:\\VS\\TTS_Lab\\TTS_Lab\\run.bat");
-	QFile bat(pathToBat);
-	if (bat.open(QIODevice::ReadWrite)) {
-		QTextStream stream(&bat);
-		stream.setCodec("Windows-1251");
-		stream << QString("chcp 1251") << endl;
-		stream << command << endl;
-		stream.flush();
-	}
-	bat.close();
-
-	int res = QProcess::execute(pathToBat);
-	QFile::remove(pathToBat);
-
-	return QString::fromUtf8(R"(C:\VS\TTS_Lab\TTS_Lab\patterns\)") + newFileName;
+    return pathToResult;
 }
 
 
 void TextToSpeechEngine::init() {
-	QDir dir(patternsDir);
-	QDirIterator it(patternsDir, QStringList() << "*.mp3", QDir::Files);
-	while (it.hasNext())
-	{
-		QString filePath = it.next();
-		QFileInfo fileInfo(filePath);
-		qDebug() << fileInfo.suffix() << endl;
-		QString file = filePath.remove(patternsDir);
-		file = file.remove(file.left(1));
+    QDir dir(m_patterns_location);
+    QDirIterator it(dir.absolutePath(), QStringList() << "*.mp3", QDir::Files);
+    while (it.hasNext())
+    {
+        QString filePath = it.next();
+        QFileInfo fileInfo(filePath);
+        qDebug() << fileInfo.suffix() << endl;
 
-		QString word = fileInfo.fileName().remove(QString(".") + fileInfo.suffix());
-		StringHash sHash(word);
+        QString word = fileInfo.fileName().remove(QString(".") + fileInfo.suffix());
+        StringHash sHash(word);
 
-		patterns[sHash.str()] = make_pair(word, fileInfo.absoluteFilePath());
-	}
+        patterns[sHash.str()] = make_pair(word, fileInfo.absoluteFilePath());
+    }
 }
 
 
 void TextToSpeechEngine::prepare(QString & s)
 {
-	s = s.toLower();
-	s = s.trimmed();
-	s = s.remove("'");
-	s = s.remove("`");
-	s = s.remove(QRegExp("[.!?\\-\,/\[\]\(\)]"));
-	s = s.replace(QRegExp("\\s+"), " ");
-	s = s.replace(QString("@"), QString::fromUtf8(u8"собака"));
+    s = s.toLower();
+    s = s.trimmed();
+    s = s.remove("'");
+    s = s.remove("`");
+    s = s.remove(QRegExp("[.!?\\-\,/\[\]\(\)]"));
+    s = s.replace(QRegExp("\\s+"), " ");
+    s = s.replace(QString("@"), QString::fromUtf8(u8"собака"));
 }

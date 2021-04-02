@@ -1,4 +1,6 @@
+<!DOCTYPE RCC>
 <RCC>
-    <qresource prefix="TTS_Lab">
+    <qresource>
+        <file>DefaultSegments/silence.mp3</file>
     </qresource>
 </RCC>

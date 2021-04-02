@@ -10,25 +10,32 @@
 #include <qmediaplayer.h>
 #include <qurl.h>
 #include <functional>
+#include <memory>
+
+class QTemporaryDir;
 
 class TTS_Lab : public QMainWindow
 {
-	Q_OBJECT
+    Q_OBJECT
 
 public:
-	TTS_Lab(QWidget *parent = Q_NULLPTR);
+    TTS_Lab(QWidget *parent = Q_NULLPTR);
+    ~TTS_Lab() override;
 
 public slots:
-	void runButtonPressed(bool);
-	void play(QString file = "");
-	void close(bool);
+    void runButtonPressed(bool);
+    void play(QString file = "");
+    void close(bool);
+    void updateToPattersFolder();
 
 private:
-	Ui::TTS_LabClass ui;
-	TextToSpeechEngine tts;
-	QFuture<QString> runTTSAsync;
-	QFutureWatcher<QString> runTTSWatcher;
-	QMediaPlayer player;
+    QString m_selected_patterns_dir;
+    Ui::TTS_LabClass ui;
+    std::unique_ptr<TextToSpeechEngine> mp_tts;
+    std::unique_ptr<QTemporaryDir> mp_patterns_copy;
+    QFuture<QString> runTTSAsync;
+    QFutureWatcher<QString> runTTSWatcher;
+    QMediaPlayer player;
 };
 
 QString runTTSWrapper(TextToSpeechEngine & tts, QString & text);
